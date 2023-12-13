@@ -1,143 +1,93 @@
 #include "simple.h"
 
 /**
- * get_history_file - Gets the history file.
- * @info: parameter struct.
+ * clear_inf - Clears the fields of the info_t structure.
+ * @info: Pointer to the info_t structure to be cleared.
  *
- * Return: allocated string containing history file.
+ * Description:
+ *`Resets the fields of the info_t structure to their initial values.
+ *
+ * Return: Void.
  */
-
-char *get_history_file(info_t *info)
+void clear_inf(info_t *info)
 {
-	char *buf, *dir;
-
-	dir = get_env(info, "HOME=");
-	if (!dir)
-		return (NULL);
-	buf = malloc(sizeof(char) * (str_len(dir) + str_len(HIST_FILE) + 2));
-	if (!buf)
-		return (NULL);
-	buf[0] = 0;
-	str_copy(buf, dir);
-	str_cat(buf, "/");
-	str_cat(buf, HIST_FILE);
-	return (buf);
+	info->arg = NULL;
+	info->argv = NULL;
+	info->path = NULL;
+	info->argc = 0;
 }
 
 /**
- * write_history - Creates a file, or appends to an existing file.
- * @info: The parameter struct.
+ * set_inf - Initializes fields of the info_t structure with command-line args.
+ * @info: Pointer to the info_t structure to be initialized.
+ * @av: The command-line arguments array from main().
  *
- * Return: 1 on success, fail -1.
+ * Description:
+ *	Sets the fields of the info_t struct based on the command-line args.
+ *	Parses the argument string to create an argv & updates
+ *	other relevant fields. Also, replaces aliases and variables in the args.
+ *
+ * Return: None.
  */
-int write_history(info_t *info)
+void set_inf(info_t *info, char **av)
 {
-	ssize_t fd;
-	char *filename = get_history_file(info);
-	list_t *node = NULL;
+	int index = 0;
 
-	if (!filename)
-		return (-1);
-
-	fd = open(filename, O_CREAT | O_TRUNC | O_RDWR, 0644);
-	free(filename);
-	if (fd == -1)
-		return (-1);
-	for (node = info->history; node; node = node->next)
+	info->fname = av[0];
+	if (info->arg)
 	{
-		_putsfds(node->str, fd);
-		_putfds('\n', fd);
-	}
-	_putfds(BUFF_FLUSH, fd);
-	close(fd);
-	return (1);
-}
-
-/**
- * read_history - Reads history from the file.
- * @info: the parameter struct.
- *
- * Return: histcount on success, 0 otherwise.
- */
-int read_history(info_t *info)
-{
-	int index, last = 0, line_count = 0;
-	ssize_t fd, rdlen, fsize = 0;
-	struct stat st;
-	char *buf = NULL, *filename = get_history_file(info);
-
-	if (!filename)
-		return (0);
-
-	fd = open(filename, O_RDONLY);
-	free(filename);
-	if (fd == -1)
-		return (0);
-	if (!fstat(fd, &st))
-		fsize = st.st_size;
-	if (fsize < 2)
-		return (0);
-	buf = malloc(sizeof(char) * (fsize + 1));
-	if (!buf)
-		return (0);
-	rdlen = read(fd, buf, fsize);
-	buf[fsize] = 0;
-	if (rdlen <= 0)
-		return (free(buf), 0);
-	close(fd);
-	for (index = 0; index < fsize; index++)
-		if (buf[index] == '\n')
+		info->argv = str_tow(info->arg, " \t");
+		if (!info->argv)
 		{
-			buf[index] = 0;
-			build_history_list(info, buf + last, line_count++);
-			last = index + 1;
+
+			info->argv = malloc(sizeof(char *) * 2);
+			if (info->argv)
+			{
+				info->argv[0] = str_dupp(info->arg);
+				info->argv[1] = NULL;
+			}
 		}
-	if (last != index)
-		build_history_list(info, buf + last, line_count++);
-	free(buf);
-	info->histcount = line_count;
-	while (info->histcount-- >= HIST_MAX)
-		delete_node_at_index(&(info->history), 0);
-	renumber_history(info);
-	return (info->histcount);
-}
+		for (index = 0; info->argv && info->argv[index]; index++)
+			;
+		info->argc = index;
 
-/**
- * build_history_list - Adds entry to the history linked lists.
- * @info: Structure containing potential args. Used to maintain.
- * @buf: buffer.
- * @linecount: the history linecount, histcount.
- *
- * Return: Always 0.
- */
-int build_history_list(info_t *info, char *buf, int linecount)
-{
-	list_t *node = NULL;
-
-	if (info->history)
-		node = info->history;
-	add_node_end(&node, buf, linecount);
-
-	if (!info->history)
-		info->history = node;
-	return (0);
-}
-
-/**
- * renumber_history - Renumbers the history linked list after changes.
- * @info: Structure containing potential arguments. Used to maintain.
- *
- * Return: the new histcount.
- */
-int renumber_history(info_t *info)
-{
-	list_t *node = info->history;
-	int i = 0;
-
-	while (node)
-	{
-		node->num = i++;
-		node = node->next;
+		replace_alias(info);
+		replace_vars(info);
 	}
-	return (info->histcount = i);
+}
+
+/**
+ * free_inf - Frees memory associated with the info_t structure.
+ * @info: Pointer to the info_t structure whose memory needs to be freed.
+ * @all: Flag indicating whether to free all associated memory (1) or not (0).
+ *
+ * Description:
+ *	Frees the memory allocated for the fields of the info_t structure.
+ *	Depending on the 'all' flag, it may free additional resources like lists,
+ *	command buffers, environment variables, and file descriptors.
+ *
+ * Return: None.
+ */
+void free_inf(info_t *info, int all)
+{
+	ffree(info->argv);
+	info->argv = NULL;
+	info->path = NULL;
+	if (all)
+	{
+		if (!info->cmd_buff)
+			free(info->arg);
+		if (info->env)
+			free_list(&(info->env));
+		if (info->history)
+			free_list(&(info->history));
+		if (info->alias)
+			free_list(&(info->alias));
+		ffree(info->environ);
+			info->environ = NULL;
+		be_free((void **)info->cmd_buff);
+		if (info->readfd > 2)
+			close(info->readfd);
+		_putchar(BUFF_FLUSH);
+	}
 }
